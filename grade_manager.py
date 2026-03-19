@@ -1,33 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-成绩管理模块 - 提供学生课程成绩的增、删、改、查及统计分析
+成绩管理模块 - 提供学生课程成绩的增、删、改、查及统计分析（数据存储于 MySQL）
 """
 
+from db import execute_query, generate_next_id
 from utils import (
-    load_json, save_json, print_title, print_menu, print_separator,
+    print_title, print_menu, print_separator,
     input_required, input_float, input_yes_no, input_choice,
-    current_timestamp, pause, generate_id
+    current_timestamp, pause,
 )
-
-GRADES_FILE = "grades.json"
-STUDENTS_FILE = "students.json"
-COURSES_FILE = "courses.json"
-
-
-def _load_grades():
-    return load_json(GRADES_FILE)
-
-
-def _save_grades(grades):
-    save_json(GRADES_FILE, grades)
-
-
-def _load_students():
-    return load_json(STUDENTS_FILE)
-
-
-def _load_courses():
-    return load_json(COURSES_FILE)
 
 
 def _get_grade_level(score):
@@ -44,11 +25,31 @@ def _get_grade_level(score):
         return "不及格"
 
 
-def _print_grade_row(grade, student_name="", course_name=""):
-    """打印成绩列表行"""
+def _score_to_gpa(score):
+    """百分制转绩点（4.0 制）"""
+    if score >= 90:
+        return 4.0
+    elif score >= 85:
+        return 3.7
+    elif score >= 80:
+        return 3.3
+    elif score >= 75:
+        return 3.0
+    elif score >= 70:
+        return 2.7
+    elif score >= 65:
+        return 2.3
+    elif score >= 60:
+        return 2.0
+    else:
+        return 0.0
+
+
+def _print_grade_row(grade):
+    """打印成绩列表行（行内已含 student_name / course_name 字段）"""
     level = _get_grade_level(grade["score"])
-    sname = student_name if student_name else grade["student_id"]
-    cname = course_name if course_name else grade["course_id"]
+    sname = grade.get("student_name", grade["student_id"])
+    cname = grade.get("course_name", grade["course_id"])
     print(
         f"  {grade['grade_id']:<10} "
         f"{grade['student_id']:<10} "
@@ -76,123 +77,123 @@ def _print_list_header():
     print_separator("-", 90)
 
 
-def _build_lookup(items, key_field):
-    """构建字典查找表，key 为指定字段的值"""
-    return {item[key_field]: item for item in items}
-
-
 # ─── 增 ──────────────────────────────────────────────────────
 
 def add_grade(current_user):
     """录入成绩"""
     print_title("录入成绩")
-    grades = _load_grades()
-    students = _load_students()
-    courses = _load_courses()
 
-    if not students:
+    students_exist = execute_query(
+        "SELECT COUNT(*) AS cnt FROM students", fetchone=True
+    )["cnt"]
+    courses_exist = execute_query(
+        "SELECT COUNT(*) AS cnt FROM courses", fetchone=True
+    )["cnt"]
+    if not students_exist:
         print("  [提示] 暂无学生数据，请先添加学生。")
         pause()
         return
-    if not courses:
+    if not courses_exist:
         print("  [提示] 暂无课程数据，请先添加课程。")
         pause()
         return
 
-    existing_ids = {g["grade_id"] for g in grades}
-    student_map = _build_lookup(students, "student_id")
-    course_map = _build_lookup(courses, "course_id")
-
     student_id = input_required("  请输入学生学号: ")
-    if student_id not in student_map:
+    student = execute_query(
+        "SELECT * FROM students WHERE student_id = %s", (student_id,), fetchone=True
+    )
+    if not student:
         print("  [错误] 该学生不存在。")
         pause()
         return
 
     course_id = input_required("  请输入课程编号: ")
-    if course_id not in course_map:
+    course = execute_query(
+        "SELECT * FROM courses WHERE course_id = %s", (course_id,), fetchone=True
+    )
+    if not course:
         print("  [错误] 该课程不存在。")
         pause()
         return
 
-    semester = course_map[course_id]["semester"]
-    # 检查是否已录入
-    dup = next(
-        (g for g in grades if g["student_id"] == student_id and g["course_id"] == course_id and g["semester"] == semester),
-        None,
+    semester = course["semester"]
+    dup = execute_query(
+        "SELECT * FROM grades WHERE student_id = %s AND course_id = %s AND semester = %s",
+        (student_id, course_id, semester),
+        fetchone=True,
     )
     if dup:
         print(
-            f"  [错误] 该学生（{student_map[student_id]['name']}）在本学期已有 "
-            f"'{course_map[course_id]['name']}' 的成绩（{dup['score']}），请使用修改功能。"
+            f"  [错误] 该学生（{student['name']}）在本学期已有 "
+            f"'{course['name']}' 的成绩（{dup['score']}），请使用修改功能。"
         )
         pause()
         return
 
     score = input_float("  成绩（0~100）: ", min_val=0.0, max_val=100.0)
     remark = input("  备注（可选）: ").strip()
+    now = current_timestamp()
 
-    new_grade = {
-        "grade_id": generate_id("G", existing_ids),
-        "student_id": student_id,
-        "course_id": course_id,
-        "score": score,
-        "semester": semester,
-        "remark": remark,
-        "created_at": current_timestamp(),
-        "updated_at": current_timestamp(),
-    }
-    grades.append(new_grade)
-    _save_grades(grades)
+    gid = generate_next_id("grades", "grade_id", "G")
+    execute_query(
+        "INSERT INTO grades "
+        "(grade_id, student_id, course_id, score, semester, remark, created_at, updated_at) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+        (gid, student_id, course_id, score, semester, remark, now, now),
+    )
     level = _get_grade_level(score)
     print(
-        f"  [成功] 已录入 {student_map[student_id]['name']} 的 "
-        f"'{course_map[course_id]['name']}' 成绩：{score}（{level}）"
+        f"  [成功] 已录入 {student['name']} 的 "
+        f"'{course['name']}' 成绩：{score}（{level}）"
     )
     pause()
 
 
 def batch_add_grades(current_user):
-    """批量录入一门课程的成绩"""
+    """批量录入一门课程的所有学生成绩"""
     print_title("批量录入课程成绩")
-    grades = _load_grades()
-    students = _load_students()
-    courses = _load_courses()
 
-    if not students:
+    students_exist = execute_query(
+        "SELECT COUNT(*) AS cnt FROM students", fetchone=True
+    )["cnt"]
+    courses_exist = execute_query(
+        "SELECT COUNT(*) AS cnt FROM courses", fetchone=True
+    )["cnt"]
+    if not students_exist:
         print("  [提示] 暂无学生数据。")
         pause()
         return
-    if not courses:
+    if not courses_exist:
         print("  [提示] 暂无课程数据。")
         pause()
         return
 
-    existing_ids = {g["grade_id"] for g in grades}
-    student_map = _build_lookup(students, "student_id")
-    course_map = _build_lookup(courses, "course_id")
-
     course_id = input_required("  请输入课程编号: ")
-    if course_id not in course_map:
+    course = execute_query(
+        "SELECT * FROM courses WHERE course_id = %s", (course_id,), fetchone=True
+    )
+    if not course:
         print("  [错误] 该课程不存在。")
         pause()
         return
 
-    course = course_map[course_id]
     semester = course["semester"]
     print(f"  课程：{course['name']}，学期：{semester}")
     print("  请依次输入每位学生的成绩（输入 'q' 结束录入）\n")
 
+    students = execute_query("SELECT * FROM students ORDER BY student_id", fetch=True)
+    now = current_timestamp()
     added = 0
     skipped = 0
     for student in students:
         sid = student["student_id"]
-        dup = next(
-            (g for g in grades if g["student_id"] == sid and g["course_id"] == course_id and g["semester"] == semester),
-            None,
+        dup = execute_query(
+            "SELECT 1 FROM grades WHERE student_id=%s AND course_id=%s AND semester=%s",
+            (sid, course_id, semester),
+            fetchone=True,
         )
         if dup:
-            print(f"  {student['name']}（{sid}）已有成绩 {dup['score']}，跳过。")
+            print(f"  {student['name']}（{sid}）本学期已有成绩，跳过。")
             skipped += 1
             continue
 
@@ -208,21 +209,15 @@ def batch_add_grades(current_user):
             skipped += 1
             continue
 
-        new_grade = {
-            "grade_id": generate_id("G", existing_ids),
-            "student_id": sid,
-            "course_id": course_id,
-            "score": score,
-            "semester": semester,
-            "remark": "",
-            "created_at": current_timestamp(),
-            "updated_at": current_timestamp(),
-        }
-        grades.append(new_grade)
-        existing_ids.add(new_grade["grade_id"])
+        gid = generate_next_id("grades", "grade_id", "G")
+        execute_query(
+            "INSERT INTO grades "
+            "(grade_id, student_id, course_id, score, semester, remark, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (gid, sid, course_id, score, semester, "", now, now),
+        )
         added += 1
 
-    _save_grades(grades)
     print(f"\n  [完成] 成功录入 {added} 条，跳过 {skipped} 条。")
     pause()
 
@@ -230,25 +225,24 @@ def batch_add_grades(current_user):
 # ─── 查 ──────────────────────────────────────────────────────
 
 def list_grades(current_user):
-    """列出所有成绩"""
-    grades = _load_grades()
+    """列出所有成绩（关联学生姓名和课程名称）"""
+    grades = execute_query(
+        "SELECT g.*, s.name AS student_name, c.name AS course_name "
+        "FROM grades g "
+        "JOIN students s ON g.student_id = s.student_id "
+        "JOIN courses  c ON g.course_id  = c.course_id "
+        "ORDER BY g.grade_id",
+        fetch=True,
+    )
     print_title("成绩列表")
     if not grades:
         print("  暂无成绩数据。")
         pause()
         return
-
-    students = _load_students()
-    courses = _load_courses()
-    student_map = _build_lookup(students, "student_id")
-    course_map = _build_lookup(courses, "course_id")
-
     print(f"  共 {len(grades)} 条成绩记录：\n")
     _print_list_header()
     for g in grades:
-        sname = student_map.get(g["student_id"], {}).get("name", "")
-        cname = course_map.get(g["course_id"], {}).get("name", "")
-        _print_grade_row(g, sname, cname)
+        _print_grade_row(g)
     pause()
 
 
@@ -263,25 +257,40 @@ def search_grade(current_user):
     print_separator("-", 60)
     choice = input_choice("  请选择查询方式: ", {"1", "2", "3", "4"})
 
-    grades = _load_grades()
-    students = _load_students()
-    courses = _load_courses()
-    student_map = _build_lookup(students, "student_id")
-    course_map = _build_lookup(courses, "course_id")
+    base_sql = (
+        "SELECT g.*, s.name AS student_name, c.name AS course_name "
+        "FROM grades g "
+        "JOIN students s ON g.student_id = s.student_id "
+        "JOIN courses  c ON g.course_id  = c.course_id "
+    )
 
     if choice == "1":
         sid = input_required("  请输入学号: ")
-        results = [g for g in grades if g["student_id"] == sid]
+        results = execute_query(
+            base_sql + "WHERE g.student_id = %s ORDER BY g.grade_id",
+            (sid,), fetch=True,
+        )
     elif choice == "2":
         cid = input_required("  请输入课程编号: ")
-        results = [g for g in grades if g["course_id"] == cid]
+        results = execute_query(
+            base_sql + "WHERE g.course_id = %s ORDER BY g.grade_id",
+            (cid,), fetch=True,
+        )
     elif choice == "3":
         sem = input_required("  请输入学期（如 2023-2024-1）: ")
-        results = [g for g in grades if g["semester"] == sem]
+        results = execute_query(
+            base_sql + "WHERE g.semester = %s ORDER BY g.grade_id",
+            (sem,), fetch=True,
+        )
     else:
-        LEVELS = {"优秀", "良好", "中等", "及格", "不及格"}
-        level = input_choice(f"  请选择等级 ({'/'.join(LEVELS)}): ", LEVELS)
-        results = [g for g in grades if _get_grade_level(g["score"]) == level]
+        LEVELS = {"优秀": (90, 100), "良好": (80, 89.9), "中等": (70, 79.9),
+                  "及格": (60, 69.9), "不及格": (0, 59.9)}
+        level = input_choice(f"  请选择等级 ({'/'.join(LEVELS)}): ", set(LEVELS))
+        lo, hi = LEVELS[level]
+        results = execute_query(
+            base_sql + "WHERE g.score >= %s AND g.score <= %s ORDER BY g.grade_id",
+            (lo, hi), fetch=True,
+        )
 
     if not results:
         print("  未找到匹配的成绩。")
@@ -289,9 +298,7 @@ def search_grade(current_user):
         print(f"  找到 {len(results)} 条记录：\n")
         _print_list_header()
         for g in results:
-            sname = student_map.get(g["student_id"], {}).get("name", "")
-            cname = course_map.get(g["course_id"], {}).get("name", "")
-            _print_grade_row(g, sname, cname)
+            _print_grade_row(g)
     pause()
 
 
@@ -299,20 +306,23 @@ def view_student_grades(current_user):
     """查看某学生的所有成绩及绩点"""
     print_title("学生成绩单")
     sid = input_required("  请输入学生学号: ")
-
-    students = _load_students()
-    student = next((s for s in students if s["student_id"] == sid), None)
+    student = execute_query(
+        "SELECT * FROM students WHERE student_id = %s", (sid,), fetchone=True
+    )
     if not student:
         print("  [错误] 未找到该学生。")
         pause()
         return
 
-    grades = _load_grades()
-    courses = _load_courses()
-    course_map = _build_lookup(courses, "course_id")
-
-    student_grades = [g for g in grades if g["student_id"] == sid]
-    if not student_grades:
+    grades = execute_query(
+        "SELECT g.*, c.name AS course_name, c.credits "
+        "FROM grades g "
+        "JOIN courses c ON g.course_id = c.course_id "
+        "WHERE g.student_id = %s "
+        "ORDER BY g.semester, c.name",
+        (sid,), fetch=True,
+    )
+    if not grades:
         print(f"  学生 {student['name']} 暂无成绩记录。")
         pause()
         return
@@ -323,10 +333,9 @@ def view_student_grades(current_user):
 
     total_weighted = 0.0
     total_credits = 0.0
-    for g in student_grades:
-        course = course_map.get(g["course_id"], {})
-        cname = course.get("name", g["course_id"])
-        credits = course.get("credits", 0)
+    for g in grades:
+        cname = g["course_name"]
+        credits = g["credits"]
         level = _get_grade_level(g["score"])
         gpa_point = _score_to_gpa(g["score"])
         total_weighted += gpa_point * credits
@@ -337,31 +346,11 @@ def view_student_grades(current_user):
         )
 
     print_separator("-", 70)
-    avg_score = sum(g["score"] for g in student_grades) / len(student_grades)
+    avg_score = sum(g["score"] for g in grades) / len(grades)
     gpa = total_weighted / total_credits if total_credits > 0 else 0
-    print(f"  共 {len(student_grades)} 门课程，总学分：{total_credits:.1f}")
+    print(f"  共 {len(grades)} 门课程，总学分：{total_credits:.1f}")
     print(f"  平均分：{avg_score:.2f}，加权绩点（GPA）：{gpa:.2f}")
     pause()
-
-
-def _score_to_gpa(score):
-    """百分制转绩点（4.0 制）"""
-    if score >= 90:
-        return 4.0
-    elif score >= 85:
-        return 3.7
-    elif score >= 80:
-        return 3.3
-    elif score >= 75:
-        return 3.0
-    elif score >= 70:
-        return 2.7
-    elif score >= 65:
-        return 2.3
-    elif score >= 60:
-        return 2.0
-    else:
-        return 0.0
 
 
 # ─── 改 ──────────────────────────────────────────────────────
@@ -370,30 +359,35 @@ def update_grade(current_user):
     """修改成绩"""
     print_title("修改成绩")
     gid = input_required("  请输入要修改的成绩ID: ")
-    grades = _load_grades()
-    grade = next((g for g in grades if g["grade_id"] == gid), None)
+    grade = execute_query(
+        "SELECT g.*, s.name AS student_name, c.name AS course_name "
+        "FROM grades g "
+        "JOIN students s ON g.student_id = s.student_id "
+        "JOIN courses  c ON g.course_id  = c.course_id "
+        "WHERE g.grade_id = %s",
+        (gid,), fetchone=True,
+    )
     if not grade:
         print("  [错误] 未找到该成绩记录。")
         pause()
         return
 
-    students = _load_students()
-    courses = _load_courses()
-    student_map = _build_lookup(students, "student_id")
-    course_map = _build_lookup(courses, "course_id")
-
-    sname = student_map.get(grade["student_id"], {}).get("name", "")
-    cname = course_map.get(grade["course_id"], {}).get("name", "")
-    print(f"\n  当前成绩：学生={sname}，课程={cname}，分数={grade['score']}，学期={grade['semester']}")
+    print(
+        f"\n  当前成绩：学生={grade['student_name']}，"
+        f"课程={grade['course_name']}，分数={grade['score']}，学期={grade['semester']}"
+    )
 
     score = input_float(f"  新成绩 [{grade['score']}]: ", min_val=0.0, max_val=100.0)
     remark = input(f"  备注 [{grade.get('remark', '')}]（留空不变）: ").strip()
+    now = current_timestamp()
 
-    grade["score"] = score
+    fields = {"score": score, "updated_at": now}
     if remark:
-        grade["remark"] = remark
-    grade["updated_at"] = current_timestamp()
-    _save_grades(grades)
+        fields["remark"] = remark
+
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    values = list(fields.values()) + [gid]
+    execute_query(f"UPDATE grades SET {set_clause} WHERE grade_id = %s", values)  # noqa: S608
     print(f"  [成功] 成绩已修改为 {score}（{_get_grade_level(score)}）。")
     pause()
 
@@ -404,25 +398,26 @@ def delete_grade(current_user):
     """删除成绩记录"""
     print_title("删除成绩")
     gid = input_required("  请输入要删除的成绩ID: ")
-    grades = _load_grades()
-    grade = next((g for g in grades if g["grade_id"] == gid), None)
+    grade = execute_query(
+        "SELECT g.*, s.name AS student_name, c.name AS course_name "
+        "FROM grades g "
+        "JOIN students s ON g.student_id = s.student_id "
+        "JOIN courses  c ON g.course_id  = c.course_id "
+        "WHERE g.grade_id = %s",
+        (gid,), fetchone=True,
+    )
     if not grade:
         print("  [错误] 未找到该成绩记录。")
         pause()
         return
 
-    students = _load_students()
-    courses = _load_courses()
-    student_map = _build_lookup(students, "student_id")
-    course_map = _build_lookup(courses, "course_id")
-    sname = student_map.get(grade["student_id"], {}).get("name", grade["student_id"])
-    cname = course_map.get(grade["course_id"], {}).get("name", grade["course_id"])
-
-    print(f"\n  即将删除：{sname} 的 '{cname}' 成绩（{grade['score']}）")
+    print(
+        f"\n  即将删除：{grade['student_name']} 的 "
+        f"'{grade['course_name']}' 成绩（{grade['score']}）"
+    )
     confirm = input_yes_no("  确认删除？")
     if confirm:
-        grades.remove(grade)
-        _save_grades(grades)
+        execute_query("DELETE FROM grades WHERE grade_id = %s", (gid,))
         print("  [成功] 成绩已删除。")
     else:
         print("  操作已取消。")
@@ -433,25 +428,35 @@ def delete_grade(current_user):
 
 def grade_statistics(current_user):
     """成绩统计分析"""
-    grades = _load_grades()
     print_title("成绩统计分析")
-    if not grades:
+    total_row = execute_query(
+        "SELECT COUNT(*) AS cnt, AVG(score) AS avg, MAX(score) AS max, MIN(score) AS min "
+        "FROM grades",
+        fetchone=True,
+    )
+    if not total_row or total_row["cnt"] == 0:
         print("  暂无成绩数据。")
         pause()
         return
 
-    courses = _load_courses()
-    course_map = _build_lookup(courses, "course_id")
+    total = total_row["cnt"]
+    avg = float(total_row["avg"])
+    max_score = float(total_row["max"])
+    min_score = float(total_row["min"])
 
-    total = len(grades)
-    scores = [g["score"] for g in grades]
-    avg = sum(scores) / total
-    max_score = max(scores)
-    min_score = min(scores)
-
+    # 各等级分布（在 Python 中统计）
+    all_grades = execute_query("SELECT score FROM grades", fetch=True)
     level_counts = {"优秀": 0, "良好": 0, "中等": 0, "及格": 0, "不及格": 0}
-    for g in grades:
+    for g in all_grades:
         level_counts[_get_grade_level(g["score"])] += 1
+
+    # 各课程平均分（SQL 聚合）
+    course_avgs = execute_query(
+        "SELECT c.name AS course_name, AVG(g.score) AS avg_score, COUNT(*) AS cnt "
+        "FROM grades g JOIN courses c ON g.course_id = c.course_id "
+        "GROUP BY g.course_id, c.name ORDER BY c.name",
+        fetch=True,
+    )
 
     print(f"  成绩记录总数  : {total}")
     print(f"  总体平均分    : {avg:.2f}")
@@ -463,109 +468,111 @@ def grade_statistics(current_user):
         pct = cnt / total * 100
         bar = "█" * int(pct / 5)
         print(f"    {level:<6}: {cnt:>4} 条 ({pct:5.1f}%) {bar}")
-
-    # 按课程统计
     print()
     print("  各课程平均分：")
-    course_groups = {}
-    for g in grades:
-        course_groups.setdefault(g["course_id"], []).append(g["score"])
-
-    for cid, cscores in sorted(course_groups.items()):
-        cname = course_map.get(cid, {}).get("name", cid)
-        cavg = sum(cscores) / len(cscores)
-        print(f"    {cname}: {cavg:.2f} 分（{len(cscores)} 人）")
-
+    for row in course_avgs:
+        print(f"    {row['course_name']}: {float(row['avg_score']):.2f} 分（{row['cnt']} 人）")
     pause()
 
 
 def top_students(current_user):
-    """查看各科前N名学生"""
+    """查看某课程成绩排名"""
     print_title("各科成绩排名")
-    courses = _load_courses()
-    if not courses:
-        print("  暂无课程数据。")
-        pause()
-        return
-
     cid = input_required("  请输入课程编号: ")
-    course = next((c for c in courses if c["course_id"] == cid), None)
+    course = execute_query(
+        "SELECT * FROM courses WHERE course_id = %s", (cid,), fetchone=True
+    )
     if not course:
         print("  [错误] 未找到该课程。")
         pause()
         return
 
-    top_n = input("  显示前几名？（默认5）: ").strip()
+    top_n_str = input("  显示前几名？（默认5）: ").strip()
     try:
-        top_n = int(top_n) if top_n else 5
+        top_n = int(top_n_str) if top_n_str else 5
         top_n = max(1, min(top_n, 100))
     except ValueError:
         top_n = 5
 
-    grades = _load_grades()
-    students = _load_students()
-    student_map = _build_lookup(students, "student_id")
+    ranked = execute_query(
+        "SELECT g.grade_id, g.student_id, s.name AS student_name, g.score, g.semester "
+        "FROM grades g "
+        "JOIN students s ON g.student_id = s.student_id "
+        "WHERE g.course_id = %s "
+        "ORDER BY g.score DESC "
+        "LIMIT %s",
+        (cid, top_n), fetch=True,
+    )
 
-    course_grades = [g for g in grades if g["course_id"] == cid]
-    if not course_grades:
+    total_in_course = execute_query(
+        "SELECT COUNT(*) AS cnt FROM grades WHERE course_id = %s",
+        (cid,), fetchone=True,
+    )["cnt"]
+
+    if not ranked:
         print(f"  课程 '{course['name']}' 暂无成绩记录。")
         pause()
         return
 
-    course_grades.sort(key=lambda g: g["score"], reverse=True)
-    display = course_grades[:top_n]
-
-    print(f"\n  课程：{course['name']}  共 {len(course_grades)} 人\n")
+    print(f"\n  课程：{course['name']}  共 {total_in_course} 人\n")
     print(f"  {'排名':<6} {'学号':<12} {'姓名':<10} {'成绩':<8} {'等级'}")
     print_separator("-", 50)
-    for rank, g in enumerate(display, 1):
-        sname = student_map.get(g["student_id"], {}).get("name", "")
+    for rank, g in enumerate(ranked, 1):
         level = _get_grade_level(g["score"])
-        print(f"  {rank:<6} {g['student_id']:<12} {sname:<10} {g['score']:<8.1f} {level}")
+        print(
+            f"  {rank:<6} {g['student_id']:<12} {g['student_name']:<10} "
+            f"{g['score']:<8.1f} {level}"
+        )
     pause()
 
 
 def batch_import_grades(current_user):
-    """批量导入示例成绩数据"""
+    """批量导入示例成绩数据（前10名学生 × 前5门课程）"""
     print_title("批量导入示例成绩数据")
-    grades = _load_grades()
-    students = _load_students()
-    courses = _load_courses()
-
-    if not students or not courses:
+    students_count = execute_query(
+        "SELECT COUNT(*) AS cnt FROM students", fetchone=True
+    )["cnt"]
+    courses_count = execute_query(
+        "SELECT COUNT(*) AS cnt FROM courses", fetchone=True
+    )["cnt"]
+    if not students_count or not courses_count:
         print("  [提示] 请先导入学生和课程数据（学生管理 → 批量导入，课程管理 → 批量导入）。")
         pause()
         return
 
-    existing_ids = {g["grade_id"] for g in grades}
-    existing_keys = {(g["student_id"], g["course_id"], g["semester"]) for g in grades}
+    students = execute_query(
+        "SELECT student_id FROM students ORDER BY student_id LIMIT 10", fetch=True
+    )
+    courses = execute_query(
+        "SELECT course_id, semester FROM courses ORDER BY course_id LIMIT 5", fetch=True
+    )
 
     import random
     random.seed(42)
-
+    now = current_timestamp()
     added = 0
-    for student in students[:10]:
-        for course in courses[:5]:
-            key = (student["student_id"], course["course_id"], course["semester"])
-            if key in existing_keys:
+
+    for student in students:
+        for course in courses:
+            sid = student["student_id"]
+            cid = course["course_id"]
+            sem = course["semester"]
+            dup = execute_query(
+                "SELECT 1 FROM grades WHERE student_id=%s AND course_id=%s AND semester=%s",
+                (sid, cid, sem), fetchone=True,
+            )
+            if dup:
                 continue
             score = round(random.uniform(55.0, 99.0), 1)
-            new_grade = {
-                "grade_id": generate_id("G", existing_ids),
-                "student_id": student["student_id"],
-                "course_id": course["course_id"],
-                "score": score,
-                "semester": course["semester"],
-                "remark": "",
-                "created_at": current_timestamp(),
-                "updated_at": current_timestamp(),
-            }
-            grades.append(new_grade)
-            existing_ids.add(new_grade["grade_id"])
-            existing_keys.add(key)
+            gid = generate_next_id("grades", "grade_id", "G")
+            execute_query(
+                "INSERT INTO grades "
+                "(grade_id, student_id, course_id, score, semester, remark, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (gid, sid, cid, score, sem, "", now, now),
+            )
             added += 1
 
-    _save_grades(grades)
     print(f"  [成功] 成功导入 {added} 条成绩数据。")
     pause()
 
@@ -616,3 +623,4 @@ def grade_management_menu(current_user):
             break
         else:
             print("  [提示] 无效选项，请重新输入。")
+

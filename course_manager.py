@@ -1,29 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-课程管理模块 - 提供课程信息的增、删、改、查
+课程管理模块 - 提供课程信息的增、删、改、查（数据存储于 MySQL）
 """
 
+from db import execute_query, generate_next_id
 from utils import (
-    load_json, save_json, print_title, print_menu, print_separator,
+    print_title, print_menu, print_separator,
     input_required, input_int, input_float, input_yes_no, input_choice,
-    current_timestamp, pause, generate_id
+    current_timestamp, pause,
 )
-
-COURSES_FILE = "courses.json"
 
 COURSE_TYPE_REQUIRED = "必修"
 COURSE_TYPE_ELECTIVE = "选修"
 COURSE_TYPE_GENERAL = "公共基础"
 
 COURSE_TYPES = {COURSE_TYPE_REQUIRED, COURSE_TYPE_ELECTIVE, COURSE_TYPE_GENERAL}
-
-
-def _load_courses():
-    return load_json(COURSES_FILE)
-
-
-def _save_courses(courses):
-    save_json(COURSES_FILE, courses)
 
 
 def _print_course(course):
@@ -69,11 +60,12 @@ def _print_list_header():
 def add_course(current_user):
     """添加课程"""
     print_title("添加课程")
-    courses = _load_courses()
-    existing_ids = {c["course_id"] for c in courses}
 
     name = input_required("  课程名称: ")
-    if any(c["name"] == name for c in courses):
+    dup = execute_query(
+        "SELECT 1 FROM courses WHERE name = %s", (name,), fetchone=True
+    )
+    if dup:
         print("  [错误] 该课程名称已存在。")
         pause()
         return
@@ -87,22 +79,18 @@ def add_course(current_user):
     semester = input_required("  开课学期（如 2023-2024-1）: ")
     teacher_name = input_required("  授课教师姓名: ")
     description = input("  课程描述（可选）: ").strip()
+    now = current_timestamp()
 
-    new_course = {
-        "course_id": generate_id("C", existing_ids),
-        "name": name,
-        "course_type": course_type,
-        "credits": credits,
-        "hours": hours,
-        "semester": semester,
-        "teacher_name": teacher_name,
-        "description": description,
-        "created_at": current_timestamp(),
-        "updated_at": current_timestamp(),
-    }
-    courses.append(new_course)
-    _save_courses(courses)
-    print(f"  [成功] 课程 '{name}' 已添加，课程编号：{new_course['course_id']}")
+    cid = generate_next_id("courses", "course_id", "C")
+    execute_query(
+        "INSERT INTO courses "
+        "(course_id, name, course_type, credits, hours, semester, "
+        " teacher_name, description, created_at, updated_at) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (cid, name, course_type, credits, hours, semester,
+         teacher_name, description, now, now),
+    )
+    print(f"  [成功] 课程 '{name}' 已添加，课程编号：{cid}")
     pause()
 
 
@@ -110,7 +98,7 @@ def add_course(current_user):
 
 def list_courses(current_user):
     """列出所有课程"""
-    courses = _load_courses()
+    courses = execute_query("SELECT * FROM courses ORDER BY course_id", fetch=True)
     print_title("课程列表")
     if not courses:
         print("  暂无课程数据。")
@@ -135,26 +123,38 @@ def search_course(current_user):
     print_separator("-", 60)
     choice = input_choice("  请选择查询方式: ", {"1", "2", "3", "4", "5"})
 
-    courses = _load_courses()
-
     if choice == "1":
         cid = input_required("  请输入课程编号: ")
-        results = [c for c in courses if c["course_id"] == cid]
+        results = execute_query(
+            "SELECT * FROM courses WHERE course_id = %s", (cid,), fetch=True
+        )
     elif choice == "2":
         keyword = input_required("  请输入课程名称关键词: ")
-        results = [c for c in courses if keyword in c["name"]]
+        results = execute_query(
+            "SELECT * FROM courses WHERE name LIKE %s ORDER BY course_id",
+            (f"%{keyword}%",), fetch=True,
+        )
     elif choice == "3":
         teacher = input_required("  请输入教师姓名: ")
-        results = [c for c in courses if teacher in c["teacher_name"]]
+        results = execute_query(
+            "SELECT * FROM courses WHERE teacher_name LIKE %s ORDER BY course_id",
+            (f"%{teacher}%",), fetch=True,
+        )
     elif choice == "4":
         ctype = input_choice(
             f"  请输入课程类型 ({'/'.join(COURSE_TYPES)}): ",
             COURSE_TYPES,
         )
-        results = [c for c in courses if c["course_type"] == ctype]
+        results = execute_query(
+            "SELECT * FROM courses WHERE course_type = %s ORDER BY course_id",
+            (ctype,), fetch=True,
+        )
     else:
         semester = input_required("  请输入学期（如 2023-2024-1）: ")
-        results = [c for c in courses if c["semester"] == semester]
+        results = execute_query(
+            "SELECT * FROM courses WHERE semester = %s ORDER BY course_id",
+            (semester,), fetch=True,
+        )
 
     if not results:
         print("  未找到匹配的课程。")
@@ -170,8 +170,9 @@ def view_course_detail(current_user):
     """查看课程详情"""
     print_title("课程详情")
     cid = input_required("  请输入课程编号: ")
-    courses = _load_courses()
-    course = next((c for c in courses if c["course_id"] == cid), None)
+    course = execute_query(
+        "SELECT * FROM courses WHERE course_id = %s", (cid,), fetchone=True
+    )
     if not course:
         print("  [错误] 未找到该课程。")
     else:
@@ -187,8 +188,9 @@ def update_course(current_user):
     """修改课程信息"""
     print_title("修改课程信息")
     cid = input_required("  请输入要修改的课程编号: ")
-    courses = _load_courses()
-    course = next((c for c in courses if c["course_id"] == cid), None)
+    course = execute_query(
+        "SELECT * FROM courses WHERE course_id = %s", (cid,), fetchone=True
+    )
     if not course:
         print("  [错误] 未找到该课程。")
         pause()
@@ -198,22 +200,24 @@ def update_course(current_user):
     _print_course(course)
     print("\n  请输入新信息（留空则保持原值不变）：\n")
 
+    fields = {}
+
     name = input(f"  课程名称 [{course['name']}]: ").strip()
     if name:
-        course["name"] = name
+        fields["name"] = name
 
     ct_input = input(
         f"  课程类型 [{course['course_type']}] ({'/'.join(COURSE_TYPES)}，留空不变): "
     ).strip()
     if ct_input in COURSE_TYPES:
-        course["course_type"] = ct_input
+        fields["course_type"] = ct_input
 
     credits_input = input(f"  学分 [{course['credits']}]: ").strip()
     if credits_input:
         try:
             credits_val = float(credits_input)
             if 0.5 <= credits_val <= 20.0:
-                course["credits"] = credits_val
+                fields["credits"] = credits_val
             else:
                 print("  [提示] 学分超出范围（0.5~20.0），保持原值。")
         except ValueError:
@@ -224,7 +228,7 @@ def update_course(current_user):
         try:
             hours_val = int(hours_input)
             if 8 <= hours_val <= 256:
-                course["hours"] = hours_val
+                fields["hours"] = hours_val
             else:
                 print("  [提示] 学时超出范围（8~256），保持原值。")
         except ValueError:
@@ -232,19 +236,24 @@ def update_course(current_user):
 
     semester = input(f"  开课学期 [{course['semester']}]: ").strip()
     if semester:
-        course["semester"] = semester
+        fields["semester"] = semester
 
     teacher_name = input(f"  授课教师 [{course['teacher_name']}]: ").strip()
     if teacher_name:
-        course["teacher_name"] = teacher_name
+        fields["teacher_name"] = teacher_name
 
     description = input(f"  课程描述 [{course.get('description', '')}]: ").strip()
     if description:
-        course["description"] = description
+        fields["description"] = description
 
-    course["updated_at"] = current_timestamp()
-    _save_courses(courses)
-    print("  [成功] 课程信息已更新。")
+    if fields:
+        fields["updated_at"] = current_timestamp()
+        set_clause = ", ".join(f"{k} = %s" for k in fields)
+        values = list(fields.values()) + [cid]
+        execute_query(f"UPDATE courses SET {set_clause} WHERE course_id = %s", values)  # noqa: S608
+        print("  [成功] 课程信息已更新。")
+    else:
+        print("  未作任何修改。")
     pause()
 
 
@@ -254,8 +263,9 @@ def delete_course(current_user):
     """删除课程"""
     print_title("删除课程")
     cid = input_required("  请输入要删除的课程编号: ")
-    courses = _load_courses()
-    course = next((c for c in courses if c["course_id"] == cid), None)
+    course = execute_query(
+        "SELECT * FROM courses WHERE course_id = %s", (cid,), fetchone=True
+    )
     if not course:
         print("  [错误] 未找到该课程。")
         pause()
@@ -264,9 +274,8 @@ def delete_course(current_user):
     print(f"\n  即将删除课程：{course['name']}（{course['course_id']}）")
     confirm = input_yes_no("  确认删除？")
     if confirm:
-        courses.remove(course)
-        _save_courses(courses)
-        print("  [成功] 课程已删除。")
+        execute_query("DELETE FROM courses WHERE course_id = %s", (cid,))
+        print("  [成功] 课程已删除（相关成绩记录同步删除）。")
     else:
         print("  操作已取消。")
     pause()
@@ -276,7 +285,7 @@ def delete_course(current_user):
 
 def course_statistics(current_user):
     """课程统计"""
-    courses = _load_courses()
+    courses = execute_query("SELECT * FROM courses", fetch=True)
     print_title("课程统计信息")
     if not courses:
         print("  暂无课程数据。")
@@ -312,45 +321,37 @@ def course_statistics(current_user):
 def batch_import_courses(current_user):
     """批量导入示例课程数据"""
     print_title("批量导入示例课程数据")
-    courses = _load_courses()
-    existing_ids = {c["course_id"] for c in courses}
-    existing_names = {c["name"] for c in courses}
-
+    now = current_timestamp()
     sample_data = [
-        ("高等数学", COURSE_TYPE_REQUIRED, 4.0, 64, "2023-2024-1", "张老师", "微积分、线代等基础数学课程"),
-        ("大学英语", COURSE_TYPE_REQUIRED, 3.0, 48, "2023-2024-1", "李老师", "大学英语听说读写"),
+        ("高等数学",       COURSE_TYPE_REQUIRED, 4.0, 64, "2023-2024-1", "张老师", "微积分、线代等基础数学课程"),
+        ("大学英语",       COURSE_TYPE_REQUIRED, 3.0, 48, "2023-2024-1", "李老师", "大学英语听说读写"),
         ("Python程序设计", COURSE_TYPE_REQUIRED, 3.0, 48, "2023-2024-1", "王老师", "Python基础编程"),
-        ("数据结构", COURSE_TYPE_REQUIRED, 3.5, 56, "2023-2024-2", "刘老师", "基本数据结构与算法"),
-        ("操作系统", COURSE_TYPE_REQUIRED, 3.0, 48, "2023-2024-2", "陈老师", "操作系统原理"),
-        ("计算机网络", COURSE_TYPE_REQUIRED, 3.0, 48, "2024-2025-1", "赵老师", "TCP/IP等网络基础"),
-        ("数据库原理", COURSE_TYPE_REQUIRED, 3.0, 48, "2024-2025-1", "孙老师", "关系型数据库理论与应用"),
-        ("人工智能导论", COURSE_TYPE_ELECTIVE, 2.0, 32, "2024-2025-1", "周老师", "AI基本概念与应用"),
-        ("软件工程", COURSE_TYPE_REQUIRED, 3.0, 48, "2024-2025-2", "吴老师", "软件开发生命周期管理"),
-        ("体育", COURSE_TYPE_GENERAL, 1.0, 32, "2023-2024-1", "郑老师", "体能训练与运动技能"),
+        ("数据结构",       COURSE_TYPE_REQUIRED, 3.5, 56, "2023-2024-2", "刘老师", "基本数据结构与算法"),
+        ("操作系统",       COURSE_TYPE_REQUIRED, 3.0, 48, "2023-2024-2", "陈老师", "操作系统原理"),
+        ("计算机网络",     COURSE_TYPE_REQUIRED, 3.0, 48, "2024-2025-1", "赵老师", "TCP/IP等网络基础"),
+        ("数据库原理",     COURSE_TYPE_REQUIRED, 3.0, 48, "2024-2025-1", "孙老师", "关系型数据库理论与应用"),
+        ("人工智能导论",   COURSE_TYPE_ELECTIVE, 2.0, 32, "2024-2025-1", "周老师", "AI基本概念与应用"),
+        ("软件工程",       COURSE_TYPE_REQUIRED, 3.0, 48, "2024-2025-2", "吴老师", "软件开发生命周期管理"),
+        ("体育",           COURSE_TYPE_GENERAL,  1.0, 32, "2023-2024-1", "郑老师", "体能训练与运动技能"),
     ]
 
     added = 0
     for name, ctype, credits, hours, semester, teacher, desc in sample_data:
-        if name in existing_names:
+        dup = execute_query(
+            "SELECT 1 FROM courses WHERE name = %s", (name,), fetchone=True
+        )
+        if dup:
             continue
-        new_course = {
-            "course_id": generate_id("C", existing_ids),
-            "name": name,
-            "course_type": ctype,
-            "credits": credits,
-            "hours": hours,
-            "semester": semester,
-            "teacher_name": teacher,
-            "description": desc,
-            "created_at": current_timestamp(),
-            "updated_at": current_timestamp(),
-        }
-        courses.append(new_course)
-        existing_ids.add(new_course["course_id"])
-        existing_names.add(name)
+        cid = generate_next_id("courses", "course_id", "C")
+        execute_query(
+            "INSERT INTO courses "
+            "(course_id, name, course_type, credits, hours, semester, "
+            " teacher_name, description, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (cid, name, ctype, credits, hours, semester, teacher, desc, now, now),
+        )
         added += 1
 
-    _save_courses(courses)
     print(f"  [成功] 成功导入 {added} 门课程数据。")
     pause()
 
@@ -395,3 +396,4 @@ def course_management_menu(current_user):
             break
         else:
             print("  [提示] 无效选项，请重新输入。")
+

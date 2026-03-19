@@ -1,46 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-工具模块 - 提供通用工具函数
+工具模块 - 提供通用工具函数（输入、显示、校验等）
+数据存储已迁移至 MySQL，详见 db.py
 """
 
 import os
-import json
 import re
 from datetime import datetime
-
-
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-
-
-def ensure_data_dir():
-    """确保数据目录存在"""
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
-
-
-def get_data_path(filename):
-    """获取数据文件的完整路径"""
-    ensure_data_dir()
-    return os.path.join(DATA_DIR, filename)
-
-
-def load_json(filename):
-    """从 JSON 文件加载数据，文件不存在时返回空列表"""
-    path = get_data_path(filename)
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return []
-
-
-def save_json(filename, data):
-    """将数据保存到 JSON 文件"""
-    path = get_data_path(filename)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def print_separator(char="=", width=60):
@@ -241,17 +207,4 @@ def _display_len(s):
     return width
 
 
-def generate_id(prefix, existing_ids):
-    """
-    生成唯一 ID
 
-    :param prefix: ID 前缀，例如 'S'、'C'、'T'
-    :param existing_ids: 已存在的 ID 集合
-    :return: 新 ID 字符串
-    """
-    n = 1
-    while True:
-        new_id = f"{prefix}{n:04d}"
-        if new_id not in existing_ids:
-            return new_id
-        n += 1

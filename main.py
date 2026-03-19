@@ -2,13 +2,15 @@
 """
 简单的信息管理系统 - 主入口
 包含：学生管理、课程管理、教师管理、成绩管理、用户管理
+数据存储：MySQL 数据库（详见 db.py 和 config.py）
 
 作者：系统默认
-版本：1.0.0
+版本：2.0.0
 """
 
 import sys
 
+from db import init_db
 from utils import print_title, print_menu, print_separator, pause, current_timestamp
 from user_manager import (
     login, logout, change_own_password,
@@ -21,7 +23,7 @@ from grade_manager import grade_management_menu
 
 
 SYSTEM_NAME = "简单的信息管理系统"
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 
 
 def print_welcome():
@@ -35,6 +37,7 @@ def print_welcome():
 
 def show_system_info(current_user):
     """显示系统信息"""
+    from config import DB_CONFIG
     print_title("系统信息")
     print(f"  系统名称    : {SYSTEM_NAME}")
     print(f"  版本号      : {VERSION}")
@@ -42,30 +45,34 @@ def show_system_info(current_user):
     print(f"  用户角色    : {current_user['role']}")
     print(f"  当前时间    : {current_timestamp()}")
     print_separator("-", 50)
-    print("  数据存储位置: ./data/")
-    print("  数据文件：")
-    print("    - students.json   学生数据")
-    print("    - courses.json    课程数据")
-    print("    - teachers.json   教师数据")
-    print("    - grades.json     成绩数据")
-    print("    - users.json      用户数据")
+    print(f"  数据库主机  : {DB_CONFIG['host']}:{DB_CONFIG['port']}")
+    print(f"  数据库名称  : {DB_CONFIG['database']}")
+    print("  数据表：")
+    print("    - users     系统用户")
+    print("    - students  学生信息")
+    print("    - courses   课程信息")
+    print("    - teachers  教师信息")
+    print("    - grades    学生成绩")
     pause()
 
 
 def quick_overview(current_user):
-    """快速查看各模块数据量"""
-    from utils import load_json
+    """快速查看各模块数据量（直接查询 MySQL）"""
+    from db import execute_query
     print_title("数据概览")
     modules = [
-        ("students.json", "学生"),
-        ("courses.json", "课程"),
-        ("teachers.json", "教师"),
-        ("grades.json", "成绩记录"),
-        ("users.json", "用户"),
+        ("students", "学生"),
+        ("courses",  "课程"),
+        ("teachers", "教师"),
+        ("grades",   "成绩记录"),
+        ("users",    "用户"),
     ]
-    for filename, label in modules:
-        records = load_json(filename)
-        print(f"  {label:<12}: {len(records)} 条")
+    for table, label in modules:
+        count = execute_query(
+            f"SELECT COUNT(*) AS cnt FROM {table}",  # noqa: S608
+            fetchone=True,
+        )["cnt"]
+        print(f"  {label:<12}: {count} 条")
     pause()
 
 
@@ -116,6 +123,13 @@ def main_menu(current_user):
 def main():
     """程序入口"""
     print_welcome()
+    # 初始化数据库表结构
+    try:
+        init_db()
+    except Exception as exc:
+        print(f"\n  [错误] 无法连接数据库：{exc}")
+        print("  请检查 config.py 中的数据库配置后重试。")
+        sys.exit(1)
     current_user = login()
     if current_user is None:
         sys.exit(1)

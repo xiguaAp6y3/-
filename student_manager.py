@@ -1,27 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-学生管理模块 - 提供学生信息的增、删、改、查
+学生管理模块 - 提供学生信息的增、删、改、查（数据存储于 MySQL）
 """
 
+from db import execute_query, generate_next_id
 from utils import (
-    load_json, save_json, print_title, print_menu, print_separator,
+    print_title, print_menu, print_separator,
     input_required, input_int, input_yes_no, input_choice,
     validate_phone, validate_id_number, current_timestamp,
-    pause, generate_id
+    pause,
 )
-
-STUDENTS_FILE = "students.json"
 
 GENDER_MALE = "男"
 GENDER_FEMALE = "女"
-
-
-def _load_students():
-    return load_json(STUDENTS_FILE)
-
-
-def _save_students(students):
-    save_json(STUDENTS_FILE, students)
 
 
 def _print_student(student):
@@ -72,17 +63,13 @@ def _print_list_header():
 def add_student(current_user):
     """添加学生"""
     print_title("添加学生")
-    students = _load_students()
-    existing_ids = {s["student_id"] for s in students}
 
-    # 基本信息
     name = input_required("  姓名: ")
     gender = input_choice("  性别 (男/女): ", {GENDER_MALE, GENDER_FEMALE})
     age = input_int("  年龄: ", min_val=1, max_val=100)
     class_name = input_required("  班级: ")
     major = input_required("  专业: ")
 
-    # 联系信息
     while True:
         phone = input_required("  手机号: ")
         if validate_phone(phone):
@@ -95,8 +82,10 @@ def add_student(current_user):
             break
         print("  [提示] 身份证号格式不正确（需为18位），请重新输入。")
 
-    # 检查身份证号唯一性
-    if any(s["id_number"] == id_number for s in students):
+    dup = execute_query(
+        "SELECT 1 FROM students WHERE id_number = %s", (id_number,), fetchone=True
+    )
+    if dup:
         print("  [错误] 该身份证号已存在，学生可能已被录入。")
         pause()
         return
@@ -104,25 +93,18 @@ def add_student(current_user):
     email = input("  邮箱（可选）: ").strip()
     enrollment_date = input("  入学日期（如 2023-09-01，可选）: ").strip()
     remark = input("  备注（可选）: ").strip()
+    now = current_timestamp()
 
-    new_student = {
-        "student_id": generate_id("S", existing_ids),
-        "name": name,
-        "gender": gender,
-        "age": age,
-        "class_name": class_name,
-        "major": major,
-        "phone": phone,
-        "id_number": id_number,
-        "email": email,
-        "enrollment_date": enrollment_date,
-        "remark": remark,
-        "created_at": current_timestamp(),
-        "updated_at": current_timestamp(),
-    }
-    students.append(new_student)
-    _save_students(students)
-    print(f"  [成功] 学生 '{name}' 已添加，学号：{new_student['student_id']}")
+    sid = generate_next_id("students", "student_id", "S")
+    execute_query(
+        "INSERT INTO students "
+        "(student_id, name, gender, age, class_name, major, phone, "
+        " id_number, email, enrollment_date, remark, created_at, updated_at) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (sid, name, gender, age, class_name, major, phone,
+         id_number, email, enrollment_date, remark, now, now),
+    )
+    print(f"  [成功] 学生 '{name}' 已添加，学号：{sid}")
     pause()
 
 
@@ -130,7 +112,7 @@ def add_student(current_user):
 
 def list_students(current_user):
     """列出所有学生"""
-    students = _load_students()
+    students = execute_query("SELECT * FROM students ORDER BY student_id", fetch=True)
     print_title("学生列表")
     if not students:
         print("  暂无学生数据。")
@@ -154,20 +136,29 @@ def search_student(current_user):
     print_separator("-", 60)
     choice = input_choice("  请选择查询方式: ", {"1", "2", "3", "4"})
 
-    students = _load_students()
-
     if choice == "1":
         sid = input_required("  请输入学号: ")
-        results = [s for s in students if s["student_id"] == sid]
+        results = execute_query(
+            "SELECT * FROM students WHERE student_id = %s", (sid,), fetch=True
+        )
     elif choice == "2":
         keyword = input_required("  请输入姓名关键词: ")
-        results = [s for s in students if keyword in s["name"]]
+        results = execute_query(
+            "SELECT * FROM students WHERE name LIKE %s ORDER BY student_id",
+            (f"%{keyword}%",), fetch=True,
+        )
     elif choice == "3":
         class_name = input_required("  请输入班级名称: ")
-        results = [s for s in students if s["class_name"] == class_name]
+        results = execute_query(
+            "SELECT * FROM students WHERE class_name = %s ORDER BY student_id",
+            (class_name,), fetch=True,
+        )
     else:
         major = input_required("  请输入专业名称: ")
-        results = [s for s in students if s["major"] == major]
+        results = execute_query(
+            "SELECT * FROM students WHERE major = %s ORDER BY student_id",
+            (major,), fetch=True,
+        )
 
     if not results:
         print("  未找到匹配的学生。")
@@ -183,8 +174,9 @@ def view_student_detail(current_user):
     """查看学生详情"""
     print_title("学生详情")
     sid = input_required("  请输入学号: ")
-    students = _load_students()
-    student = next((s for s in students if s["student_id"] == sid), None)
+    student = execute_query(
+        "SELECT * FROM students WHERE student_id = %s", (sid,), fetchone=True
+    )
     if not student:
         print("  [错误] 未找到该学生。")
     else:
@@ -200,8 +192,9 @@ def update_student(current_user):
     """修改学生信息"""
     print_title("修改学生信息")
     sid = input_required("  请输入要修改的学生学号: ")
-    students = _load_students()
-    student = next((s for s in students if s["student_id"] == sid), None)
+    student = execute_query(
+        "SELECT * FROM students WHERE student_id = %s", (sid,), fetchone=True
+    )
     if not student:
         print("  [错误] 未找到该学生。")
         pause()
@@ -211,20 +204,22 @@ def update_student(current_user):
     _print_student(student)
     print("\n  请输入新信息（留空则保持原值不变）：\n")
 
+    fields = {}
+
     name = input(f"  姓名 [{student['name']}]: ").strip()
     if name:
-        student["name"] = name
+        fields["name"] = name
 
     gender_input = input(f"  性别 [{student['gender']}] (男/女，留空不变): ").strip()
     if gender_input in (GENDER_MALE, GENDER_FEMALE):
-        student["gender"] = gender_input
+        fields["gender"] = gender_input
 
     age_input = input(f"  年龄 [{student['age']}]: ").strip()
     if age_input:
         try:
             age_val = int(age_input)
             if 1 <= age_val <= 100:
-                student["age"] = age_val
+                fields["age"] = age_val
             else:
                 print("  [提示] 年龄超出范围，保持原值。")
         except ValueError:
@@ -232,30 +227,35 @@ def update_student(current_user):
 
     class_name = input(f"  班级 [{student['class_name']}]: ").strip()
     if class_name:
-        student["class_name"] = class_name
+        fields["class_name"] = class_name
 
     major = input(f"  专业 [{student['major']}]: ").strip()
     if major:
-        student["major"] = major
+        fields["major"] = major
 
     phone_input = input(f"  手机号 [{student['phone']}]: ").strip()
     if phone_input:
         if validate_phone(phone_input):
-            student["phone"] = phone_input
+            fields["phone"] = phone_input
         else:
             print("  [提示] 手机号格式不正确，保持原值。")
 
     email_input = input(f"  邮箱 [{student['email']}]: ").strip()
     if email_input:
-        student["email"] = email_input
+        fields["email"] = email_input
 
     remark_input = input(f"  备注 [{student.get('remark', '')}]: ").strip()
     if remark_input:
-        student["remark"] = remark_input
+        fields["remark"] = remark_input
 
-    student["updated_at"] = current_timestamp()
-    _save_students(students)
-    print("  [成功] 学生信息已更新。")
+    if fields:
+        fields["updated_at"] = current_timestamp()
+        set_clause = ", ".join(f"{k} = %s" for k in fields)
+        values = list(fields.values()) + [sid]
+        execute_query(f"UPDATE students SET {set_clause} WHERE student_id = %s", values)  # noqa: S608
+        print("  [成功] 学生信息已更新。")
+    else:
+        print("  未作任何修改。")
     pause()
 
 
@@ -265,8 +265,9 @@ def delete_student(current_user):
     """删除学生"""
     print_title("删除学生")
     sid = input_required("  请输入要删除的学生学号: ")
-    students = _load_students()
-    student = next((s for s in students if s["student_id"] == sid), None)
+    student = execute_query(
+        "SELECT * FROM students WHERE student_id = %s", (sid,), fetchone=True
+    )
     if not student:
         print("  [错误] 未找到该学生。")
         pause()
@@ -275,9 +276,8 @@ def delete_student(current_user):
     print(f"\n  即将删除学生：{student['name']}（{student['student_id']}，{student['class_name']}）")
     confirm = input_yes_no("  确认删除？")
     if confirm:
-        students.remove(student)
-        _save_students(students)
-        print("  [成功] 学生已删除。")
+        execute_query("DELETE FROM students WHERE student_id = %s", (sid,))
+        print("  [成功] 学生已删除（相关成绩记录同步删除）。")
     else:
         print("  操作已取消。")
     pause()
@@ -287,7 +287,7 @@ def delete_student(current_user):
 
 def student_statistics(current_user):
     """学生信息统计"""
-    students = _load_students()
+    students = execute_query("SELECT * FROM students", fetch=True)
     print_title("学生统计信息")
     if not students:
         print("  暂无学生数据。")
@@ -297,19 +297,15 @@ def student_statistics(current_user):
     total = len(students)
     male_count = sum(1 for s in students if s["gender"] == GENDER_MALE)
     female_count = total - male_count
+    avg_age = sum(s["age"] for s in students) / total if total > 0 else 0
 
-    # 按班级统计
     class_counter = {}
     for s in students:
         class_counter[s["class_name"]] = class_counter.get(s["class_name"], 0) + 1
 
-    # 按专业统计
     major_counter = {}
     for s in students:
         major_counter[s["major"]] = major_counter.get(s["major"], 0) + 1
-
-    # 平均年龄
-    avg_age = sum(s["age"] for s in students) / total if total > 0 else 0
 
     print(f"  学生总数    : {total}")
     print(f"  男生人数    : {male_count}")
@@ -327,53 +323,40 @@ def student_statistics(current_user):
 
 
 def batch_import_students(current_user):
-    """
-    批量导入学生（从内置示例数据，用于演示）
-    实际项目中可从 CSV 文件读取
-    """
+    """批量导入示例学生数据"""
     print_title("批量导入示例学生数据")
-    students = _load_students()
-    existing_ids = {s["student_id"] for s in students}
-    existing_id_numbers = {s["id_number"] for s in students}
-
+    now = current_timestamp()
     sample_data = [
         ("张伟", "男", 20, "计科2101", "计算机科学与技术", "13800010001", "110101200300010001"),
         ("李娜", "女", 19, "计科2101", "计算机科学与技术", "13800010002", "110101200400020002"),
-        ("王芳", "女", 21, "软工2102", "软件工程", "13800010003", "110101200200030003"),
-        ("刘洋", "男", 20, "软工2102", "软件工程", "13800010004", "110101200300040004"),
-        ("陈静", "女", 22, "网络2103", "网络工程", "13800010005", "110101200100050005"),
-        ("赵磊", "男", 19, "网络2103", "网络工程", "13800010006", "110101200400060006"),
+        ("王芳", "女", 21, "软工2102", "软件工程",         "13800010003", "110101200200030003"),
+        ("刘洋", "男", 20, "软工2102", "软件工程",         "13800010004", "110101200300040004"),
+        ("陈静", "女", 22, "网络2103", "网络工程",         "13800010005", "110101200100050005"),
+        ("赵磊", "男", 19, "网络2103", "网络工程",         "13800010006", "110101200400060006"),
         ("孙丽", "女", 20, "数据2104", "数据科学与大数据技术", "13800010007", "110101200300070007"),
         ("周杰", "男", 21, "数据2104", "数据科学与大数据技术", "13800010008", "110101200200080008"),
         ("吴敏", "女", 20, "计科2101", "计算机科学与技术", "13800010009", "110101200300090009"),
-        ("郑强", "男", 22, "软工2102", "软件工程", "13800010010", "110101200100100010"),
+        ("郑强", "男", 22, "软工2102", "软件工程",         "13800010010", "110101200100100010"),
     ]
 
     added = 0
     for name, gender, age, cls, major, phone, id_num in sample_data:
-        if id_num in existing_id_numbers:
+        dup = execute_query(
+            "SELECT 1 FROM students WHERE id_number = %s", (id_num,), fetchone=True
+        )
+        if dup:
             continue
-        new_student = {
-            "student_id": generate_id("S", existing_ids),
-            "name": name,
-            "gender": gender,
-            "age": age,
-            "class_name": cls,
-            "major": major,
-            "phone": phone,
-            "id_number": id_num,
-            "email": f"{phone}@example.com",
-            "enrollment_date": "2021-09-01",
-            "remark": "",
-            "created_at": current_timestamp(),
-            "updated_at": current_timestamp(),
-        }
-        students.append(new_student)
-        existing_ids.add(new_student["student_id"])
-        existing_id_numbers.add(id_num)
+        sid = generate_next_id("students", "student_id", "S")
+        execute_query(
+            "INSERT INTO students "
+            "(student_id, name, gender, age, class_name, major, phone, "
+            " id_number, email, enrollment_date, remark, created_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (sid, name, gender, age, cls, major, phone,
+             id_num, f"{phone}@example.com", "2021-09-01", "", now, now),
+        )
         added += 1
 
-    _save_students(students)
     print(f"  [成功] 成功导入 {added} 条学生数据。")
     pause()
 
@@ -418,3 +401,4 @@ def student_management_menu(current_user):
             break
         else:
             print("  [提示] 无效选项，请重新输入。")
+

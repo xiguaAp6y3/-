@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-用户管理模块 - 提供用户注册、登录、修改密码等功能
+用户管理模块 - 提供用户注册、登录、修改密码等功能（数据存储于 MySQL）
 """
 
 import hashlib
+from db import execute_query, generate_next_id
 from utils import (
-    load_json, save_json, print_title, print_menu, print_separator,
+    print_title, print_menu, print_separator,
     input_required, input_choice, input_yes_no, current_timestamp,
-    pause, generate_id
+    pause,
 )
-
-USERS_FILE = "users.json"
 
 # 角色定义
 ROLE_ADMIN = "admin"
@@ -29,27 +28,16 @@ def _hash_password(password):
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
-def _load_users():
-    return load_json(USERS_FILE)
-
-
-def _save_users(users):
-    save_json(USERS_FILE, users)
-
-
 def _init_default_admin():
-    """若没有任何用户则创建默认管理员账号"""
-    users = _load_users()
-    if not users:
-        admin = {
-            "user_id": "U0001",
-            "username": "admin",
-            "password": _hash_password("admin123"),
-            "role": ROLE_ADMIN,
-            "name": "系统管理员",
-            "created_at": current_timestamp(),
-        }
-        _save_users([admin])
+    """若 users 表为空则创建默认管理员账号"""
+    count = execute_query("SELECT COUNT(*) AS cnt FROM users", fetchone=True)["cnt"]
+    if count == 0:
+        uid = generate_next_id("users", "user_id", "U")
+        execute_query(
+            "INSERT INTO users (user_id, username, password, role, name, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (uid, "admin", _hash_password("admin123"), ROLE_ADMIN, "系统管理员", current_timestamp()),
+        )
         print("  [系统] 已创建默认管理员账号：用户名 admin，密码 admin123")
 
 
@@ -64,13 +52,17 @@ def login():
     for _ in range(3):
         username = input("  用户名: ").strip()
         password = input("  密  码: ").strip()
-        users = _load_users()
         hashed = _hash_password(password)
-        for user in users:
-            if user["username"] == username and user["password"] == hashed:
-                print(f"\n  登录成功！欢迎您，{user['name']}（{ROLE_LABELS.get(user['role'], user['role'])}）")
-                pause()
-                return user
+        user = execute_query(
+            "SELECT * FROM users WHERE username = %s AND password = %s",
+            (username, hashed),
+            fetchone=True,
+        )
+        if user:
+            role_label = ROLE_LABELS.get(user["role"], user["role"])
+            print(f"\n  登录成功！欢迎您，{user['name']}（{role_label}）")
+            pause()
+            return user
         print("  [错误] 用户名或密码不正确，请重试。\n")
     print("  [错误] 登录失败次数过多，程序退出。")
     return None
@@ -91,12 +83,12 @@ def add_user(current_user):
         pause()
         return
     print_title("添加用户")
-    users = _load_users()
-    existing_ids = {u["user_id"] for u in users}
-    existing_usernames = {u["username"] for u in users}
 
     username = input_required("  用户名: ")
-    if username in existing_usernames:
+    exists = execute_query(
+        "SELECT 1 FROM users WHERE username = %s", (username,), fetchone=True
+    )
+    if exists:
         print("  [错误] 用户名已存在。")
         pause()
         return
@@ -105,20 +97,16 @@ def add_user(current_user):
     name = input_required("  姓  名: ")
     role = input_choice(
         "  角  色 (admin/teacher/student): ",
-        {ROLE_ADMIN, ROLE_TEACHER, ROLE_STUDENT}
+        {ROLE_ADMIN, ROLE_TEACHER, ROLE_STUDENT},
     )
 
-    new_user = {
-        "user_id": generate_id("U", existing_ids),
-        "username": username,
-        "password": _hash_password(password),
-        "role": role,
-        "name": name,
-        "created_at": current_timestamp(),
-    }
-    users.append(new_user)
-    _save_users(users)
-    print(f"  [成功] 用户 '{username}' 已添加，ID：{new_user['user_id']}")
+    uid = generate_next_id("users", "user_id", "U")
+    execute_query(
+        "INSERT INTO users (user_id, username, password, role, name, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (uid, username, _hash_password(password), role, name, current_timestamp()),
+    )
+    print(f"  [成功] 用户 '{username}' 已添加，ID：{uid}")
     pause()
 
 
@@ -128,7 +116,7 @@ def list_users(current_user):
         print("  [错误] 无权限执行此操作。")
         pause()
         return
-    users = _load_users()
+    users = execute_query("SELECT * FROM users ORDER BY user_id", fetch=True)
     print_title("用户列表")
     if not users:
         print("  暂无用户数据。")
@@ -145,22 +133,30 @@ def list_users(current_user):
 def update_user(current_user):
     """修改用户信息（管理员可修改任意用户，普通用户只能修改自己）"""
     print_title("修改用户信息")
-    users = _load_users()
 
     if current_user["role"] == ROLE_ADMIN:
         uid = input_required("  请输入要修改的用户ID: ")
-        target = next((u for u in users if u["user_id"] == uid), None)
+        target = execute_query(
+            "SELECT * FROM users WHERE user_id = %s", (uid,), fetchone=True
+        )
         if not target:
             print("  [错误] 用户不存在。")
             pause()
             return
     else:
-        target = next((u for u in users if u["user_id"] == current_user["user_id"]), None)
+        target = execute_query(
+            "SELECT * FROM users WHERE user_id = %s",
+            (current_user["user_id"],),
+            fetchone=True,
+        )
 
     print(f"  当前姓名：{target['name']}")
     new_name = input("  新姓名（留空保持不变）: ").strip()
     if new_name:
-        target["name"] = new_name
+        execute_query(
+            "UPDATE users SET name = %s WHERE user_id = %s",
+            (new_name, target["user_id"]),
+        )
 
     change_pwd = input_yes_no("  是否修改密码？")
     if change_pwd:
@@ -170,9 +166,11 @@ def update_user(current_user):
             pause()
             return
         new_pwd = input_required("  新密码: ")
-        target["password"] = _hash_password(new_pwd)
+        execute_query(
+            "UPDATE users SET password = %s WHERE user_id = %s",
+            (_hash_password(new_pwd), target["user_id"]),
+        )
 
-    _save_users(users)
     print("  [成功] 用户信息已更新。")
     pause()
 
@@ -184,9 +182,10 @@ def delete_user(current_user):
         pause()
         return
     print_title("删除用户")
-    users = _load_users()
     uid = input_required("  请输入要删除的用户ID: ")
-    target = next((u for u in users if u["user_id"] == uid), None)
+    target = execute_query(
+        "SELECT * FROM users WHERE user_id = %s", (uid,), fetchone=True
+    )
     if not target:
         print("  [错误] 用户不存在。")
         pause()
@@ -195,10 +194,11 @@ def delete_user(current_user):
         print("  [错误] 不能删除当前登录的账号。")
         pause()
         return
-    confirm = input_yes_no(f"  确认删除用户 '{target['username']}' ({target['name']})？")
+    confirm = input_yes_no(
+        f"  确认删除用户 '{target['username']}' ({target['name']})？"
+    )
     if confirm:
-        users.remove(target)
-        _save_users(users)
+        execute_query("DELETE FROM users WHERE user_id = %s", (uid,))
         print("  [成功] 用户已删除。")
     else:
         print("  操作已取消。")
@@ -213,11 +213,12 @@ def search_user(current_user):
         return
     print_title("查询用户")
     keyword = input_required("  请输入用户名或姓名关键词: ")
-    users = _load_users()
-    results = [
-        u for u in users
-        if keyword in u["username"] or keyword in u["name"]
-    ]
+    like = f"%{keyword}%"
+    results = execute_query(
+        "SELECT * FROM users WHERE username LIKE %s OR name LIKE %s",
+        (like, like),
+        fetch=True,
+    )
     if not results:
         print("  未找到匹配的用户。")
     else:
@@ -233,8 +234,11 @@ def search_user(current_user):
 def change_own_password(current_user):
     """当前用户修改自己的密码"""
     print_title("修改密码")
-    users = _load_users()
-    target = next((u for u in users if u["user_id"] == current_user["user_id"]), None)
+    target = execute_query(
+        "SELECT * FROM users WHERE user_id = %s",
+        (current_user["user_id"],),
+        fetchone=True,
+    )
     if not target:
         print("  [错误] 账户数据异常。")
         pause()
@@ -251,8 +255,10 @@ def change_own_password(current_user):
         print("  [错误] 两次输入的密码不一致。")
         pause()
         return
-    target["password"] = _hash_password(new_pwd)
-    _save_users(users)
+    execute_query(
+        "UPDATE users SET password = %s WHERE user_id = %s",
+        (_hash_password(new_pwd), target["user_id"]),
+    )
     print("  [成功] 密码已修改，请重新登录。")
     pause()
 
