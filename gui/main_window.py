@@ -247,23 +247,17 @@ class MainWindow(QMainWindow):
 
     def show_overview(self):
         """数据概览"""
-        # Table names are from a fixed allowlist – no user input involved.
-        _ALLOWED_TABLES = {"students", "courses", "teachers", "grades", "users"}
-        modules = [
-            ("students", "学生"),
-            ("courses",  "课程"),
-            ("teachers", "教师"),
-            ("grades",   "成绩记录"),
-            ("users",    "用户"),
-        ]
+        # Use pre-constructed queries per table to avoid any string concatenation risks.
+        _QUERIES = {
+            "students": ("学生",      "SELECT COUNT(*) AS cnt FROM students"),
+            "courses":  ("课程",      "SELECT COUNT(*) AS cnt FROM courses"),
+            "teachers": ("教师",      "SELECT COUNT(*) AS cnt FROM teachers"),
+            "grades":   ("成绩记录",  "SELECT COUNT(*) AS cnt FROM grades"),
+            "users":    ("用户",      "SELECT COUNT(*) AS cnt FROM users"),
+        }
         lines = []
-        for table, label in modules:
-            if table not in _ALLOWED_TABLES:
-                continue
-            count = execute_query(
-                "SELECT COUNT(*) AS cnt FROM " + table,
-                fetchone=True,
-            )["cnt"]
+        for _table, (label, sql) in _QUERIES.items():
+            count = execute_query(sql, fetchone=True)["cnt"]
             lines.append(f"{label}：{count} 条")
         QMessageBox.information(self, "数据概览", "\n".join(lines))
 

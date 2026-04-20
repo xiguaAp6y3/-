@@ -26,7 +26,11 @@ def main():
 
     # 设置全局字体（兼容中文显示）
     font = QFont("Microsoft YaHei", 10)
-    font.setFamilies(["Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Sans"])
+    # Set preferred font families for CJK support; fall back to setFamily for Qt < 5.13
+    try:
+        font.setFamilies(["Microsoft YaHei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Sans"])
+    except AttributeError:
+        font.setFamily("Microsoft YaHei")
     app.setFont(font)
 
     # 初始化数据库
