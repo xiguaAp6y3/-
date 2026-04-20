@@ -3,8 +3,6 @@
 登录对话框
 """
 
-import hashlib
-
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
@@ -14,11 +12,7 @@ from PyQt5.QtWidgets import (
 
 from db import execute_query, init_db
 from utils import current_timestamp
-from user_manager import ROLE_ADMIN, ROLE_TEACHER, ROLE_STUDENT, ROLE_LABELS
-
-
-def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+from user_manager import ROLE_ADMIN, ROLE_TEACHER, ROLE_STUDENT, ROLE_LABELS, _hash_password
 
 
 def _init_default_admin():

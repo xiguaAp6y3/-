@@ -3,8 +3,6 @@
 用户管理 – PyQt5 Widget（仅管理员可见）
 """
 
-import hashlib
-
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -15,14 +13,10 @@ from PyQt5.QtWidgets import (
 
 from db import execute_query, generate_next_id
 from utils import current_timestamp
-from user_manager import ROLE_ADMIN, ROLE_TEACHER, ROLE_STUDENT, ROLE_LABELS
+from user_manager import ROLE_ADMIN, ROLE_TEACHER, ROLE_STUDENT, ROLE_LABELS, _hash_password
 
 ROLE_OPTIONS = [ROLE_ADMIN, ROLE_TEACHER, ROLE_STUDENT]
 ROLE_DISPLAY = {ROLE_ADMIN: "管理员", ROLE_TEACHER: "教师", ROLE_STUDENT: "学生"}
-
-
-def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 class UserDialog(QDialog):

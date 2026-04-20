@@ -3,8 +3,6 @@
 主窗口 – QMainWindow，包含菜单栏、工具栏、标签页内容区及状态栏
 """
 
-import hashlib
-
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import (
@@ -15,7 +13,7 @@ from PyQt5.QtWidgets import (
 
 from db import execute_query
 from utils import current_timestamp
-from user_manager import ROLE_ADMIN, ROLE_LABELS
+from user_manager import ROLE_ADMIN, ROLE_LABELS, _hash_password
 
 from gui.student_widget import StudentWidget
 from gui.course_widget import CourseWidget
@@ -25,10 +23,6 @@ from gui.user_widget import UserWidget, ChangePasswordDialog
 
 SYSTEM_NAME = "简单的信息管理系统"
 VERSION = "2.0.0"
-
-
-def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 class MainWindow(QMainWindow):
@@ -253,6 +247,8 @@ class MainWindow(QMainWindow):
 
     def show_overview(self):
         """数据概览"""
+        # Table names are from a fixed allowlist – no user input involved.
+        _ALLOWED_TABLES = {"students", "courses", "teachers", "grades", "users"}
         modules = [
             ("students", "学生"),
             ("courses",  "课程"),
@@ -262,8 +258,10 @@ class MainWindow(QMainWindow):
         ]
         lines = []
         for table, label in modules:
+            if table not in _ALLOWED_TABLES:
+                continue
             count = execute_query(
-                f"SELECT COUNT(*) AS cnt FROM {table}",  # noqa: S608
+                "SELECT COUNT(*) AS cnt FROM " + table,
                 fetchone=True,
             )["cnt"]
             lines.append(f"{label}：{count} 条")
@@ -316,7 +314,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         reply = QMessageBox.question(
             self, "退出确认",
-            f"确定要退出系统吗？",
+            "确定要退出系统吗？",
             QMessageBox.Yes | QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
